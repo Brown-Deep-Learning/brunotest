@@ -1,63 +1,46 @@
-import importlib
 import os
-import sys
 import click
 import shutil
 import pytest
-from core import compiler
+from core import compiler, imports
+from dataclasses import dataclass
 
 BRUNOTEST_DIR = "__brunotest__"
+CODE_DIR = "code"
 
 
-def import_student(package_name: str, import_name: str):
+def import_student_module(module_name: str):
     """
     Import a student's module and return it.
     Must be compatible with how this works on gradescopes end.
+
+    In the autograder, student code is imported as follows:
+    "/autograder/student"
     """
-
-    # Get the directory of the current file
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-
-    # Get the directory of the student's file
-    student_dir = os.path.join(current_dir, package_name)
-
-    # Add the student's directory to the path
-    sys.path.append(student_dir)
-
-    # Import the student's module
-    student_module = importlib.import_module(import_name)
-
-    # Remove the student's directory from the path
-    sys.path.remove(student_dir)
+    module_path = os.path.join("student", *module_name.split(".")) + ".py"
+    # Import the solution's module
+    student_module = imports.import_module_without_cache(module_name, module_path)
 
     return student_module
 
 
-def import_solution(package_name: str, import_name: str):
+def import_solution_module(module_name: str):
     """
     Import a solution's module and return it.
     Must be compatible with how this works on gradescopes end.
+
+    In the autograder, student code is imported as follows:
+    "/autograder/solution"
     """
 
-    # Get the directory of the current file
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-
-    # Get the directory of the solution's file
-    solution_dir = os.path.join(current_dir, "solutions", package_name)
-
-    # Add the solution's directory to the path
-    sys.path.append(solution_dir)
-
+    module_path = os.path.join("solution", *module_name.split(".")) + ".py"
     # Import the solution's module
-    solution_module = importlib.import_module(import_name)
-
-    # Remove the solution's directory from the path
-    sys.path.remove(solution_dir)
+    solution_module = imports.import_module_without_cache(module_name, module_path)
 
     return solution_module
 
 
-def remove_all(path: str) -> None:
+def remove_all(path: str, remove_dir: bool = True) -> None:
     """
     Removes all files and directories in the given path.
     """
@@ -67,12 +50,13 @@ def remove_all(path: str) -> None:
         for dir in dirs:
             shutil.rmtree(os.path.join(root, dir))
 
-    # os.rmdir(path)
+    if remove_dir and os.path.isdir(path):
+        os.rmdir(path)
 
 
 def create_brunotest_dir():
     """
-    Makes a directory called `__brunotest__` in the current working directory and enters it.
+    Makes a directory called `__brunotest__` in the current working directory.
     """
     # Make a directory in the current working directory called __brunotest__
 
@@ -81,7 +65,7 @@ def create_brunotest_dir():
         os.mkdir(BRUNOTEST_DIR)
 
     # Remove any existing files in the directory
-    remove_all(BRUNOTEST_DIR)
+    remove_all(BRUNOTEST_DIR, False)
 
 
 def cleanup_brunotest_dir():
@@ -89,7 +73,6 @@ def cleanup_brunotest_dir():
     Deletes the `__brunotest__` directory in the current working directory.
     """
     # Delete the directory
-
     remove_all(BRUNOTEST_DIR)
 
 
@@ -141,6 +124,167 @@ def compile_to_directory(
                 os.path.join(output_directory, file),
                 chaff_replacements,
             )
+
+
+FAILURE_PREFIX = "### Fails:"
+FAILURE_PREFIX_LEN = len(FAILURE_PREFIX)
+
+
+def get_chaff_expected_test_failures(chafF_path: str) -> set[str]:
+    """ """
+    # Read the chaff file
+    with open(chafF_path, "r") as f:
+        chaff_lines = f.readlines()
+
+    expected_test_failures = set()
+
+    for line in chaff_lines:
+        if line.startswith(FAILURE_PREFIX):
+            expected_test_failures.add(line[FAILURE_PREFIX_LEN:].strip())
+
+    return expected_test_failures
+
+
+class BrunotestPytestPlugin:
+    def __init__(
+        self,
+    ):
+        self.test_outputs = dict()
+        self.test_stdout = dict()
+        self.passed_tests = set()
+        self.failed_tests = set()
+
+    def get_test_name(self, complete_name):
+        return complete_name.split(".py::")[-1]
+
+    def pytest_runtest_logreport(self, report):
+        if report.when == "call":
+            test_name = self.get_test_name(report.nodeid)
+            if report.passed:
+                self.passed_tests.add(test_name)
+            else:
+                self.failed_tests.add(test_name)
+
+            self.test_stdout[test_name] = report.capstdout
+
+            if report.longrepr is not None:
+                self.test_outputs[test_name] = str(report.longrepr)
+            else:
+                self.test_outputs[test_name] = ""
+
+
+@dataclass
+class BrunotestAutograderResult:
+    """
+    Represents the result of trying to run the autograder on a particular chaff.
+    """
+
+    passed: bool
+    chaff_name: str
+    tests_failed_unexpectedly: set[str]
+    tests_passed_unexpectedly: set[str]
+    test_details: dict[str, str]
+    test_stdout: dict[str, str]
+
+
+def simulate_autograder(
+    absolute_chaff_path, chaff_name, absolute_solution_path, absolute_path_to_tests
+) -> BrunotestAutograderResult:
+    absolute_brunotest_dir = os.path.abspath(BRUNOTEST_DIR)
+    autograder_path = os.path.join(absolute_brunotest_dir, "autograder")
+    os.mkdir(autograder_path)
+
+    os.chdir(autograder_path)
+
+    # Copy the solution directory to the autograder
+    shutil.copytree(absolute_solution_path, "solution")
+
+    # Compile the chaff code to the autograder folder
+    student_directory = os.path.join(autograder_path, "student")
+
+    os.mkdir(student_directory)
+    compile_to_directory(
+        absolute_solution_path,
+        absolute_chaff_path,
+        student_directory,
+    )
+
+    expected_failures = get_chaff_expected_test_failures(absolute_chaff_path)
+
+    # Once it is compiled, run the tests.
+    current_dir = os.path.abspath(os.getcwd())
+    testing_plugin = BrunotestPytestPlugin()
+    pytest.main(
+        ["-q", "--color=yes", absolute_path_to_tests, "--full-trace"],
+        plugins=[testing_plugin],
+    )
+
+    tests_passed_unexpectedly = set.intersection(
+        expected_failures, testing_plugin.passed_tests
+    )
+
+    tests_failed_unexpectedly = set.difference(
+        testing_plugin.failed_tests, expected_failures
+    )
+
+    os.chdir(current_dir)
+
+    passed = len(tests_passed_unexpectedly) == 0 and len(tests_failed_unexpectedly) == 0
+    result = BrunotestAutograderResult(
+        passed,
+        chaff_name,
+        tests_failed_unexpectedly,
+        tests_passed_unexpectedly,
+        testing_plugin.test_outputs,
+        testing_plugin.test_stdout,
+    )
+
+    return result
+
+
+def summarize_test_result(autograder_test: BrunotestAutograderResult) -> None:
+    """ """
+    if autograder_test.passed:
+        click.echo(
+            click.style(
+                f"Chaff {autograder_test.chaff_name} behaved as expected!",
+                fg="green",
+            )
+        )
+    else:
+        # Tell the user how the test failed
+        click.echo(
+            click.style(
+                f"Chaff {autograder_test.chaff_name} failed!",
+                fg="red",
+            )
+        )
+
+        # Tell the user which tests failed unexpectedly
+        for unexpected_failure in autograder_test.tests_failed_unexpectedly:
+            click.echo(
+                click.style(
+                    f"{autograder_test.chaff_name}: {unexpected_failure} failed unexpectedly...",
+                    fg="blue",
+                    bold=True,
+                )
+            )
+            click.echo(click.style(autograder_test.test_details[unexpected_failure]))
+
+            click.echo(click.style("Standard Output: ", fg="yellow", bold=True))
+            click.echo(autograder_test.test_stdout[unexpected_failure])
+
+        # Tell the user which tests passed unexpectedly
+        for unexpected_success in autograder_test.tests_passed_unexpectedly:
+            click.echo(
+                click.style(
+                    f"{autograder_test.chaff_name}: {unexpected_success} passed unexpectedly...",
+                    fg="blue",
+                    bold=True,
+                )
+            )
+            click.echo(click.style("Standard Output: ", fg="yellow", bold=True))
+            click.echo(autograder_test.test_stdout[unexpected_success])
 
 
 @click.command()
@@ -200,24 +344,27 @@ def brunotest(
 
     create_brunotest_dir()
     original_dir = os.path.abspath(os.getcwd())
+    absolute_solution_path = os.path.abspath(os.path.join(directory, "code"))
+    absolute_test_path = os.path.abspath(os.path.join(directory, "tests"))
     try:
         # Compile all of the specified chaffs to the testing directory
+        test_results = []
         for chaff_path, chaff_name in chaff_path_name:
-            os.mkdir(os.path.join(BRUNOTEST_DIR, chaff_name))
-            compile_to_directory(
-                os.path.join(directory, "code"),
-                chaff_path,
-                os.path.join(BRUNOTEST_DIR, chaff_name),
+            #
+            absolute_chaff_path = os.path.abspath(chaff_path)
+            autograder_result = simulate_autograder(
+                absolute_chaff_path,
+                chaff_name,
+                absolute_solution_path,
+                absolute_test_path,
             )
-            # Once it is compiled, run the tests.
-            directory_absolute = os.path.abspath(directory)
-            current_dir = os.path.abspath(os.getcwd())
-            os.chdir(os.path.join(BRUNOTEST_DIR, chaff_name))
-            result = pytest.main(
-                ["-q", "--color=yes", os.path.join(directory_absolute, "tests")]
-            )
-            os.chdir(current_dir)
-            print(result)
+
+            test_results.append(autograder_result)
+
+        # Output the results to the user
+        for test_result in test_results:
+            summarize_test_result(test_result)
+
         cleanup_brunotest_dir()
     except Exception as e:
         os.chdir(original_dir)

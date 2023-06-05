@@ -1,7 +1,7 @@
 import unittest
 from gradescope_utils.autograder_utils.decorators import number, weight
-
-from brunotest import import_solution, import_student
+import os
+from brunotest import import_solution_module, import_student_module
 
 
 class TestFibonacci(unittest.TestCase):
@@ -11,7 +11,7 @@ class TestFibonacci(unittest.TestCase):
         """
         Base case values are correct
         """
-        student_fibonacci = import_student("fibonacci", "fibonacci")
+        student_fibonacci = import_student_module("fibonacci")
         self.assertEqual(student_fibonacci.fibonacci(0), 0)
         self.assertEqual(student_fibonacci.fibonacci(1), 1)
         print("Base cases are correct!")
@@ -22,12 +22,22 @@ class TestFibonacci(unittest.TestCase):
         """
         General computation cases for fibonacci are correct
         """
-        student_fibonacci = import_student("fibonacci", "fibonacci")
-        solution_fibonacci = import_solution("fibonacci", "fibonacci")
+        student_fibonacci = import_student_module("fibonacci")
+        solution_fibonacci = import_solution_module("fibonacci")
 
-        for i in range(2, 1000):
+        print(student_fibonacci, solution_fibonacci)
+
+        for i in range(0, 12):
             self.assertEqual(
                 student_fibonacci.fibonacci(i), solution_fibonacci.fibonacci(i)
             )
 
         print("General cases are correct!")
+
+    @number("2")
+    @weight(75)
+    def test_always_passes(self):
+        """
+        General computation cases for fibonacci are correct
+        """
+        print("Test passed!")

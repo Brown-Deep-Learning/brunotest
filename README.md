@@ -23,3 +23,13 @@ Some other considerations/definitions for now:
         1. This may be somewhat challenging because we have to incorporate failing partial tests, test names, etc. 
 2. The stencil code will be in a _single_ `.stencil` file in the root directory (error on multiple found). 
     1. The stencil also does not have to specify every distinct region to overwrite, but those which are not specified will be __left blank__. 
+
+## Gradescope Autograder Specifications
+
+The gradescope autograder, with the configuration that we use it in, has the following directory structure:
+
+```
+/autograder/ # Base Directory
+/autograder/student # Student submission
+/autograder/solution # Solution code 
+```

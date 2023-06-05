@@ -1,5 +1,7 @@
+### Fails: TestFibonacci::test_base_cases
+### Fails: TestFibonacci::test_general
 ### Region: fibonacci.call
-if n == 0:
+if n <= 0:
     return 1
 if n == 1:
     return 0
