@@ -14,7 +14,7 @@ setup(
     description="<short description for the tool>",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="<github url where the tool code will remain>",
+    url="https://github.com/Brown-Deep-Learning/brunotest",
     py_modules=["brunotest"],
     packages=find_packages(),
     install_requires=[requirements],
@@ -25,6 +25,6 @@ setup(
     ],
     entry_points="""
         [console_scripts]
-        cooltool=my_tool:cli
+        brunotest=brunotest:brunotest_cli_entry
     """,
 )

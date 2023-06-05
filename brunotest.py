@@ -130,10 +130,23 @@ FAILURE_PREFIX = "### Fails:"
 FAILURE_PREFIX_LEN = len(FAILURE_PREFIX)
 
 
-def get_chaff_expected_test_failures(chafF_path: str) -> set[str]:
-    """ """
+def get_chaff_expected_test_failures(chaff_path: str | None) -> set[str]:
+    """
+    Reads the chaff file and returns a set of all of the expected test failures.
+
+    Args:
+        chafF_path (str): The path to the chaff file.
+
+    Returns:
+        set[str]: A set of all of the expected test failures.
+    """
+    if chaff_path is None:
+        # Is the solution, in which case there are no expected test failures
+        return set()
+
+    print(chaff_path)
     # Read the chaff file
-    with open(chafF_path, "r") as f:
+    with open(chaff_path, "r") as f:
         chaff_lines = f.readlines()
 
     expected_test_failures = set()
@@ -146,6 +159,12 @@ def get_chaff_expected_test_failures(chafF_path: str) -> set[str]:
 
 
 class BrunotestPytestPlugin:
+    """
+    Custom pytest plugin that stores the test outputs and stdout for each test.
+
+    Also keeps track of which tests passed and which tests failed.
+    """
+
     def __init__(
         self,
     ):
@@ -155,9 +174,18 @@ class BrunotestPytestPlugin:
         self.failed_tests = set()
 
     def get_test_name(self, complete_name):
+        """
+        Isolates the path of the test file from the test name.
+        """
         return complete_name.split(".py::")[-1]
 
-    def pytest_runtest_logreport(self, report):
+    def pytest_runtest_logreport(self, report) -> None:
+        """
+        Callback for various events in the pytest run.
+
+        We only care about the call event, which is when the test is actually run,
+        but there are also the setup and teardown events.
+        """
         if report.when == "call":
             test_name = self.get_test_name(report.nodeid)
             if report.passed:
@@ -188,8 +216,12 @@ class BrunotestAutograderResult:
 
 
 def simulate_autograder(
-    absolute_chaff_path, chaff_name, absolute_solution_path, absolute_path_to_tests
+    absolute_chaff_path: str | None,
+    chaff_name: str,
+    absolute_solution_path: str,
+    absolute_path_to_tests: str,
 ) -> BrunotestAutograderResult:
+    current_dir = os.path.abspath(os.getcwd())
     absolute_brunotest_dir = os.path.abspath(BRUNOTEST_DIR)
     autograder_path = os.path.join(absolute_brunotest_dir, "autograder")
     os.mkdir(autograder_path)
@@ -202,17 +234,21 @@ def simulate_autograder(
     # Compile the chaff code to the autograder folder
     student_directory = os.path.join(autograder_path, "student")
 
-    os.mkdir(student_directory)
-    compile_to_directory(
-        absolute_solution_path,
-        absolute_chaff_path,
-        student_directory,
-    )
+    if chaff_name == "solution":
+        # If the chaff is the solution, then just copy the solution directory
+        shutil.copytree(absolute_solution_path, student_directory)
+    else:
+        os.mkdir(student_directory)
+        compile_to_directory(
+            absolute_solution_path,
+            absolute_chaff_path,
+            student_directory,
+        )
 
     expected_failures = get_chaff_expected_test_failures(absolute_chaff_path)
 
     # Once it is compiled, run the tests.
-    current_dir = os.path.abspath(os.getcwd())
+
     testing_plugin = BrunotestPytestPlugin()
     pytest.main(
         ["-q", "--color=yes", absolute_path_to_tests, "--full-trace"],
@@ -227,8 +263,6 @@ def simulate_autograder(
         testing_plugin.failed_tests, expected_failures
     )
 
-    os.chdir(current_dir)
-
     passed = len(tests_passed_unexpectedly) == 0 and len(tests_failed_unexpectedly) == 0
     result = BrunotestAutograderResult(
         passed,
@@ -238,6 +272,11 @@ def simulate_autograder(
         testing_plugin.test_outputs,
         testing_plugin.test_stdout,
     )
+
+    os.chdir(current_dir)
+
+    # Clean up the autograder structure for this run
+    remove_all(autograder_path)
 
     return result
 
@@ -290,16 +329,15 @@ def summarize_test_result(autograder_test: BrunotestAutograderResult) -> None:
 @click.command()
 @click.argument("chaffs", nargs=-1)
 @click.option("--directory", "--dir", "-d", type=click.Path(exists=True))
+@click.option("--run_all", "-a", is_flag=True, help="Run all chaffs", default=False)
 @click.option(
     "compile_dir",
     "-c",
     type=click.Path(),
     help="The directory to compile and output the results to",
 )
-def brunotest(
-    chaffs: list[str],
-    directory: str,
-    compile_dir: str | None,
+def brunotest_cli_entry(
+    chaffs: list[str], directory: str, compile_dir: str | None, run_all: bool
 ):
     """
     The entry point for the brunotest command line executable.
@@ -310,13 +348,17 @@ def brunotest(
     chaff_names = [
         os.path.basename(chaff_path).split(".")[0] for chaff_path in chaff_paths
     ]
-    chaff_path_name = list(zip(chaff_paths, chaff_names)) + [(stencil_path, "stencil")]
+    chaff_path_name = (
+        list(zip(chaff_paths, chaff_names))
+        + [(stencil_path, "stencil")]
+        + [(None, "solution")]
+    )
 
     # Select only the chaffs we have in chaffs
     chaff_path_name = [
         (chaff_path, chaff_name)
         for chaff_path, chaff_name in chaff_path_name
-        if (chaff_name in chaffs or "all" in chaffs)
+        if (chaff_name in chaffs or run_all)
     ]
 
     if len(chaff_path_name) == 0:
@@ -328,11 +370,18 @@ def brunotest(
         os.mkdir(compile_dir)
         for chaff_path, chaff_name in chaff_path_name:
             os.mkdir(os.path.join(compile_dir, chaff_name))
-            compile_to_directory(
-                os.path.join(directory, "code"),
-                chaff_path,
-                os.path.join(compile_dir, chaff_name),
-            )
+            if chaff_path is not None:
+                compile_to_directory(
+                    os.path.join(directory, "code"),
+                    chaff_path,
+                    os.path.join(compile_dir, chaff_name),
+                )
+            else:
+                # Copy the solution to the compile directory
+                shutil.copytree(
+                    os.path.join(directory, "code"),
+                    os.path.join(compile_dir, chaff_name),
+                )
 
         click.echo(
             click.style(
@@ -350,8 +399,9 @@ def brunotest(
         # Compile all of the specified chaffs to the testing directory
         test_results = []
         for chaff_path, chaff_name in chaff_path_name:
-            #
-            absolute_chaff_path = os.path.abspath(chaff_path)
+            absolute_chaff_path = (
+                os.path.abspath(chaff_path) if chaff_path is not None else None
+            )
             autograder_result = simulate_autograder(
                 absolute_chaff_path,
                 chaff_name,
@@ -366,11 +416,11 @@ def brunotest(
             summarize_test_result(test_result)
 
         cleanup_brunotest_dir()
-    except Exception as e:
+    except Exception as exception:
         os.chdir(original_dir)
         cleanup_brunotest_dir()
-        raise e
+        raise exception
 
 
 if __name__ == "__main__":
-    brunotest()
+    brunotest_cli_entry()
