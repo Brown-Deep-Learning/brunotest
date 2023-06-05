@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-import re
 
 REGION_START_STRING = "### Region: "
 REGION_START_STRING_LENGTH = len(REGION_START_STRING)

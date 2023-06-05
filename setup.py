@@ -11,7 +11,7 @@ setup(
     author="Robert Scheidegger",
     author_email="robert_scheidegger@brown.edu",
     license="MIT",
-    description="<short description for the tool>",
+    description="CLI tool for robust autograder chaff testing",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/Brown-Deep-Learning/brunotest",
