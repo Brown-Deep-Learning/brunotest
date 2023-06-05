@@ -221,6 +221,7 @@ def simulate_autograder(
     absolute_solution_path: str,
     absolute_path_to_tests: str,
 ) -> BrunotestAutograderResult:
+    """ """
     current_dir = os.path.abspath(os.getcwd())
     absolute_brunotest_dir = os.path.abspath(BRUNOTEST_DIR)
     autograder_path = os.path.join(absolute_brunotest_dir, "autograder")
